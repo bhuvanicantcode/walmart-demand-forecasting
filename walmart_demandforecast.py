@@ -41,21 +41,38 @@ st.set_page_config(
 # ── Custom CSS ───────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .main-title   { font-size:2.2rem; font-weight:700; color:#0D1F3C; }
+    .main-title   { font-size:2.2rem; font-weight:700; color: var(--text-color); }
     .sub-title    { font-size:1.1rem; color:#64748B; margin-top:-10px; }
-    .metric-card  { background:#F8FAFC; border:1px solid #E2E8F0;
+    .metric-card  { background: var(--secondary-background-color);
+                    border:1px solid rgba(128,128,128,0.2);
                     border-radius:10px; padding:16px; text-align:center; }
     .metric-val   { font-size:1.8rem; font-weight:700; color:#2563EB; }
     .metric-label { font-size:0.85rem; color:#64748B; }
-    .insight-box  { background:#EFF6FF; border-left:4px solid #2563EB;
-                    padding:12px 16px; border-radius:4px; font-size:0.92rem; }
-    .warn-box     { background:#FEF3C7; border-left:4px solid #F59E0B;
-                    padding:12px 16px; border-radius:4px; font-size:0.92rem; }
+
+    .insight-box  { background: rgba(37, 99, 235, 0.12);
+                    border-left:4px solid #2563EB;
+                    padding:12px 16px; border-radius:4px;
+                    font-size:0.92rem;
+                    color: var(--text-color) !important; }
+
+    .warn-box     { background: rgba(245, 158, 11, 0.12);
+                    border-left:4px solid #F59E0B;
+                    padding:12px 16px; border-radius:4px;
+                    font-size:0.92rem;
+                    color: var(--text-color) !important; }
+
+    .insight-box b, .warn-box b { color: var(--text-color) !important; }
+    .insight-box i, .warn-box i { color: var(--text-color) !important; }
+
     section[data-testid="stSidebar"] { background:#0D1F3C; }
     section[data-testid="stSidebar"] * { color: white !important; }
+    section[data-testid="stSidebar"] input { 
+        background: rgba(255,255,255,0.1) !important;
+        border: 1px solid rgba(255,255,255,0.3) !important;
+        color: white !important;
+    }
 </style>
 """, unsafe_allow_html=True)
-
 # ═══════════════════════════════════════════════════════════════════════════
 # DATA — Walmart Store Sales dataset (Kaggle, 421,570 rows)
 # Source: https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting
