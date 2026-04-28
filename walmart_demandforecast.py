@@ -41,54 +41,18 @@ st.set_page_config(
 # ── Custom CSS ───────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* Sidebar background */
-    section[data-testid="stSidebar"] { background:#0D1F3C !important; }
-    section[data-testid="stSidebar"] * { color: white !important; }
-
-    /* Fix input fields in sidebar */
-    section[data-testid="stSidebar"] input,
-    section[data-testid="stSidebar"] .stTextInput input,
-    section[data-testid="stSidebar"] .stNumberInput input {
-        background-color: rgba(255,255,255,0.15) !important;
-        color: white !important;
-        border: 1px solid rgba(255,255,255,0.4) !important;
-        border-radius: 6px !important;
-    }
-
-    /* Fix selectbox in sidebar */
-    section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div {
-        background-color: rgba(255,255,255,0.15) !important;
-        color: white !important;
-        border: 1px solid rgba(255,255,255,0.4) !important;
-    }
-
-    /* Fix slider label color */
-    section[data-testid="stSidebar"] .stSlider p { color: white !important; }
-
-    /* Main content insight/warn boxes */
-    .insight-box {
-        background: rgba(37, 99, 235, 0.10);
-        border-left: 4px solid #2563EB;
-        padding: 12px 16px; border-radius: 4px;
-        font-size: 0.92rem;
-        color: var(--text-color) !important;
-    }
-    .warn-box {
-        background: rgba(245, 158, 11, 0.10);
-        border-left: 4px solid #F59E0B;
-        padding: 12px 16px; border-radius: 4px;
-        font-size: 0.92rem;
-        color: var(--text-color) !important;
-    }
-    .metric-card {
-        background: var(--secondary-background-color);
-        border: 1px solid rgba(128,128,128,0.2);
-        border-radius: 10px; padding: 16px; text-align: center;
-    }
+    .main-title   { font-size:2.2rem; font-weight:700; color:#0D1F3C; }
+    .sub-title    { font-size:1.1rem; color:#64748B; margin-top:-10px; }
+    .metric-card  { background:#F8FAFC; border:1px solid #E2E8F0;
+                    border-radius:10px; padding:16px; text-align:center; }
     .metric-val   { font-size:1.8rem; font-weight:700; color:#2563EB; }
     .metric-label { font-size:0.85rem; color:#64748B; }
-    .main-title   { font-size:2.2rem; font-weight:700; color: var(--text-color); }
-    .sub-title    { font-size:1.1rem; color:#64748B; margin-top:-10px; }
+    .insight-box  { background:#EFF6FF; border-left:4px solid #2563EB;
+                    padding:12px 16px; border-radius:4px; font-size:0.92rem; }
+    .warn-box     { background:#FEF3C7; border-left:4px solid #F59E0B;
+                    padding:12px 16px; border-radius:4px; font-size:0.92rem; }
+    section[data-testid="stSidebar"] { background:#0D1F3C; }
+    section[data-testid="stSidebar"] * { color: white !important; }
 </style>
 """, unsafe_allow_html=True)
 # ═══════════════════════════════════════════════════════════════════════════
