@@ -62,7 +62,7 @@ st.markdown("""
 # ═══════════════════════════════════════════════════════════════════════════
 @st.cache_data
 def load_walmart_data():
-    df = pd.read_csv(r'C:\Users\91957\Desktop\SCM PROJECTS\walmart data\train.csv')
+    df = pd.read_csv('walmart data/train.csv')
     df['Date'] = pd.to_datetime(df['Date'])
     df = df[df['Weekly_Sales'] > 0].copy()
     return df
