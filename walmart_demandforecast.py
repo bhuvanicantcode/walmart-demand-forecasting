@@ -62,7 +62,7 @@ st.markdown("""
 # ═══════════════════════════════════════════════════════════════════════════
 @st.cache_data
 def load_walmart_data():
-    df = pd.read_csv('walmart data/train.csv')
+    df = pd.read_csv(r'C:\Users\91957\Desktop\SCM PROJECTS\walmart data\train.csv')
     df['Date'] = pd.to_datetime(df['Date'])
     df = df[df['Weekly_Sales'] > 0].copy()
     return df
@@ -70,14 +70,78 @@ def load_walmart_data():
 
 @st.cache_data
 def run_sarima(series, forecast_weeks=12):
-    """Fit SARIMA(1,1,1)(1,1,0,52) and return forecast + confidence interval."""
+    """Fit SARIMA(1,1,1)(1,1,0,52) and return forecast + confidence interval.
+    Also returns a 52-week forecast for forecast-driven EOQ/ROP calculations."""
     model  = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,0,52),
                      enforce_stationarity=False, enforce_invertibility=False)
     result = model.fit(disp=False)
     fc     = result.get_forecast(steps=forecast_weeks)
     mean   = fc.predicted_mean
     ci     = fc.conf_int(alpha=0.05)
-    return mean, ci, result
+    # 52-week forecast for annual demand (forecast-driven EOQ)
+    fc_52  = result.get_forecast(steps=52).predicted_mean.clip(lower=0)
+    return mean, ci, result, fc_52
+
+
+@st.cache_data
+def run_rolling_rop(series, lead_time, unit_cost, std_demand, service_level,
+                    roll_weeks=52, min_train=52):
+    """
+    Rolling-window ROP: for each of the last `roll_weeks` weeks,
+    refit SARIMA on data up to that point and compute a forecast-driven ROP.
+    Returns a DataFrame with Date and ROP columns.
+    """
+    z_map = {0.90: 1.282, 0.91: 1.341, 0.92: 1.405,
+             0.93: 1.476, 0.94: 1.555, 0.95: 1.645,
+             0.96: 1.751, 0.97: 1.881, 0.98: 2.054, 0.99: 2.326}
+    z = z_map.get(round(service_level, 2), 1.645)
+    safety_stk = z * std_demand * np.sqrt(lead_time)
+
+    n = len(series)
+    start = max(min_train, n - roll_weeks)
+    records = []
+
+    for i in range(start, n):
+        train = series.iloc[:i]
+        try:
+            model = SARIMAX(train, order=(1,1,1), seasonal_order=(1,1,0,52),
+                            enforce_stationarity=False, enforce_invertibility=False)
+            res = model.fit(disp=False)
+            fc_lt = res.get_forecast(steps=lead_time).predicted_mean.clip(lower=0)
+            demand_lt = fc_lt.sum() / unit_cost
+            rop = demand_lt + safety_stk
+        except Exception:
+            rop = np.nan
+        records.append({"Date": series.index[i], "ROP": rop})
+
+    return pd.DataFrame(records).set_index("Date")
+
+
+@st.cache_data
+def run_forward_rop(fc_52, lead_time, unit_cost, std_demand, service_level, forecast_weeks):
+    """
+    Forward-looking ROP table: for each forecast week,
+    use a rolling lead_time window of the 52-week forecast to compute ROP.
+    """
+    z_map = {0.90: 1.282, 0.91: 1.341, 0.92: 1.405,
+             0.93: 1.476, 0.94: 1.555, 0.95: 1.645,
+             0.96: 1.751, 0.97: 1.881, 0.98: 2.054, 0.99: 2.326}
+    z = z_map.get(round(service_level, 2), 1.645)
+    safety_stk = z * std_demand * np.sqrt(lead_time)
+
+    records = []
+    for i in range(min(forecast_weeks, len(fc_52))):
+        window = fc_52.iloc[i: i + lead_time]
+        demand_lt = window.sum() / unit_cost
+        rop = demand_lt + safety_stk
+        records.append({
+            "Forecast Week": i + 1,
+            "Week Start": fc_52.index[i].strftime("%Y-%m-%d") if hasattr(fc_52.index[i], 'strftime') else str(fc_52.index[i]),
+            "Forecasted Demand (units)": round(fc_52.iloc[i] / unit_cost, 1),
+            "ROP (units)": round(rop, 0),
+            "Safety Stock (units)": round(safety_stk, 0),
+        })
+    return pd.DataFrame(records)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -165,14 +229,25 @@ if len(series) < 52:
     st.error("Not enough data for this Store/Dept combination.")
     st.stop()
 
+# ── Fit SARIMA once — reused by forecast tab AND inventory calculations ──
+with st.spinner("Fitting SARIMA model..."):
+    mean_fc, ci_fc, sarima_result, fc_52 = run_sarima(series, forecast_weeks)
+
 # ── Top KPI row ──────────────────────────────────────────────────────────
 avg_weekly = series.mean()
-annual_demand_units = (avg_weekly / unit_cost) * 52
+
+# FORECAST-DRIVEN: annual demand from 52-week SARIMA forecast, not historical avg
+annual_demand_units = fc_52.sum() / unit_cost
+
 holding_cost_pu = unit_cost * (holding_pct / 100)
 eoq         = calc_eoq(annual_demand_units, ordering_cost, holding_cost_pu)
 std_demand  = series.std() / unit_cost
 safety_stk  = calc_safety_stock(std_demand, lead_time, service_level)
-reorder_pt  = (avg_weekly / unit_cost) * lead_time + safety_stk
+
+# FORECAST-DRIVEN: ROP uses forecasted demand over lead time window, not historical avg
+fc_leadtime = fc_52.iloc[:lead_time].sum() / unit_cost
+reorder_pt  = fc_leadtime + safety_stk
+
 oc, hc, tc  = calc_inventory_costs(eoq, annual_demand_units,
                                     ordering_cost, safety_stk, holding_cost_pu)
 
@@ -197,18 +272,16 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ══════════════════════════════════════════════════════════════════════════
 # TAB LAYOUT
 # ══════════════════════════════════════════════════════════════════════════
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Demand Forecast", "🔬 Time Series Analysis",
-    "📊 Inventory Optimization", "💰 Cost Sensitivity"
+    "📊 Inventory Optimization", "💰 Cost Sensitivity",
+    "🔄 Rolling ROP"
 ])
 
 # ── TAB 1: SARIMA Forecast ───────────────────────────────────────────────
 with tab1:
     st.subheader(f"SARIMA Demand Forecast — Store {selected_store}, Dept {selected_dept}")
-    
-    with st.spinner("Fitting SARIMA model..."):
-        mean_fc, ci_fc, sarima_result = run_sarima(series, forecast_weeks)
-    
+
     future_dates = pd.date_range(series.index[-1], periods=forecast_weeks+1, freq="W-FRI")[1:]
     
     fig, ax = plt.subplots(figsize=(13, 5))
@@ -335,7 +408,9 @@ with tab3:
         inventory drops to <b>{reorder_pt:,.0f} units</b>. 
         The <b>{safety_stk:,.0f} unit safety buffer</b> protects against 
         demand spikes during the {lead_time}-week lead time at a 
-        <b>{int(service_level*100)}% service level</b>.
+        <b>{int(service_level*100)}% service level</b>. 
+        <i>ROP and EOQ are computed from the SARIMA forecast, not a historical average — 
+        so they adjust automatically to upcoming seasonal demand.</i>
         </div>""", unsafe_allow_html=True)
 
     with c2:
@@ -364,7 +439,7 @@ with tab3:
     rows_sl = []
     for sl in sl_levels:
         ss   = calc_safety_stock(std_demand, lead_time, sl)
-        rp   = (avg_weekly / unit_cost) * lead_time + ss
+        rp   = fc_leadtime + ss  # forecast-driven
         _, _, tot = calc_inventory_costs(eoq, annual_demand_units,
                                           ordering_cost, ss, holding_cost_pu)
         rows_sl.append({
@@ -451,4 +526,99 @@ with tab4:
     the current reorder point of <b>{reorder_pt:,.0f} units</b> would be breached 
     in approximately <b>{max(1, int(safety_stk / (avg_weekly/unit_cost * 0.25)))} week(s)</b>. 
     Pre-positioning inventory 3 weeks before major holidays is recommended.
+    </div>""", unsafe_allow_html=True)
+
+
+# ── TAB 5: Rolling ROP ───────────────────────────────────────────────────
+with tab5:
+    st.subheader("🔄 Rolling Window Reorder Point")
+    st.markdown("""
+    <div class="insight-box">
+    <b>What this shows:</b> Instead of one fixed ROP, the model refits SARIMA every week 
+    on all data up to that point, then forecasts the next <b>lead time</b> weeks to compute 
+    a dynamic ROP. This is how a real production inventory system would behave — 
+    the trigger point updates as the demand signal evolves.
+    </div>""", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    with st.spinner("Running rolling window SARIMA (last 52 weeks) — this takes ~40 seconds..."):
+        rolling_rop_df = run_rolling_rop(
+            series, lead_time, unit_cost, std_demand, service_level,
+            roll_weeks=52, min_train=52
+        )
+
+    # ── Chart: historical rolling ROP ───────────────────────────────────
+    st.markdown("#### 📉 Historical Rolling ROP (last 52 weeks)")
+
+    fig, ax = plt.subplots(figsize=(13, 5))
+    fig.patch.set_facecolor("#F8FAFC")
+    ax.set_facecolor("#F8FAFC")
+
+    # Actual sales (right-axis scaled to units)
+    ax2 = ax.twinx()
+    hist = series[rolling_rop_df.index[0]:]
+    ax2.fill_between(hist.index, hist.values / unit_cost,
+                     alpha=0.12, color="#94A3B8", label="Actual Demand (units)")
+    ax2.set_ylabel("Actual Demand (units)", fontsize=9, color="#94A3B8")
+    ax2.tick_params(axis="y", labelcolor="#94A3B8")
+
+    # Rolling ROP line
+    ax.plot(rolling_rop_df.index, rolling_rop_df["ROP"],
+            color="#2563EB", linewidth=2, label="Dynamic ROP", zorder=3)
+    ax.axhline(reorder_pt, color="#EF4444", linestyle="--", linewidth=1.5,
+               label=f"Static ROP (current): {reorder_pt:,.0f}")
+
+    # Holiday markers
+    holiday_dates = series.index[
+        df[mask].set_index("Date")["IsHoliday"]
+        .reindex(series.index).fillna(False).astype(bool)
+    ]
+    for d in holiday_dates:
+        if d >= rolling_rop_df.index[0]:
+            ax.axvline(d, color="#F59E0B", alpha=0.3, linewidth=1)
+
+    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax.set_xlabel("Week"); ax.set_ylabel("Reorder Point (units)", fontsize=10)
+    ax.legend(loc="upper left", fontsize=9)
+    ax.grid(axis="y", alpha=0.3)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.suptitle(f"Dynamic vs Static ROP — Store {selected_store}, Dept {selected_dept}",
+                 fontsize=12)
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close()
+
+    # Insight: how much did ROP vary?
+    rop_min = rolling_rop_df["ROP"].min()
+    rop_max = rolling_rop_df["ROP"].max()
+    rop_swing = ((rop_max - rop_min) / rop_min) * 100
+    st.markdown(f"""
+    <div class="insight-box" style="margin-top:8px">
+    <b>🔍 Key Insight:</b> The dynamic ROP swung between 
+    <b>{rop_min:,.0f}</b> and <b>{rop_max:,.0f} units</b> — 
+    a <b>{rop_swing:.1f}% range</b> over the last 52 weeks. 
+    A static ROP of {reorder_pt:,.0f} would have been too low during demand peaks 
+    (risking stockouts) and unnecessarily high during slow periods (excess holding cost). 
+    Yellow lines mark holiday weeks where ROP spikes are expected.
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Table: forward-looking ROP per forecast week ─────────────────────
+    st.markdown("#### 📅 Forward-Looking ROP — Next {} Weeks".format(forecast_weeks))
+    st.markdown("Each row shows what the ROP *should be* in that forecast week, "
+                "based on SARIMA's demand estimate for the following lead time window.")
+
+    fwd_df = run_forward_rop(
+        fc_52, lead_time, unit_cost, std_demand, service_level, forecast_weeks
+    )
+    st.dataframe(fwd_df, use_container_width=True, hide_index=True)
+
+    fwd_max_rop  = fwd_df["ROP (units)"].max()
+    fwd_max_week = fwd_df.loc[fwd_df["ROP (units)"].idxmax(), "Forecast Week"]
+    st.markdown(f"""
+    <div class="warn-box" style="margin-top:8px">
+    <b>⚡ Action Signal:</b> Peak ROP over the next {forecast_weeks} weeks is 
+    <b>{fwd_max_rop:,.0f} units</b> in forecast week {fwd_max_week}. 
+    Ensure inventory is above this level before that week to avoid a stockout.
     </div>""", unsafe_allow_html=True)
